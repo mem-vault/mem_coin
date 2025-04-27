@@ -85,7 +85,9 @@ module mem_coin::memvault {
         blob_id: String,
     }
 
-    public struct ServiceWitness has store, drop {}
+    public struct ServiceWitness has store, drop {
+        
+    }
 
     public entry fun create_service(
         name: String,
@@ -96,9 +98,11 @@ module mem_coin::memvault {
         ctx: &mut TxContext
     ) {
         assert!(max_subscribers > 0 && total_supply > 0, EInvalidCap);
-        // let witness = ServiceWitness { id: object::new(ctx) };
+        let witness = ServiceWitness {};
+        // let witness = object::new<ServiceWitness>(ctx);
+
         let (mut treasury_cap, coin_metadata) = create_currency<ServiceWitness>(
-            ServiceWitness {},
+            witness,
             18u8,
             std::string::into_bytes(name),
             std::string::into_bytes(symbol),
@@ -149,68 +153,6 @@ module mem_coin::memvault {
     }
 
 
-    // public entry fun create_service(
-    //     name: String,
-    //     symbol: String,
-    //     total_supply: u64,
-    //     initial_sui_liquidity: Coin<SUI>,
-    //     max_subscribers: u64,
-    //     ctx: &mut TxContext
-    // ) {
-    //     assert!(max_subscribers > 0 && total_supply > 0, EInvalidCap);
-
-    //     // Use the correct one-time witness pattern for coin creation
-    //     let (mut treasury_cap, coin_metadata) = create_currency<Phantom>(
-    //         Phantom {},
-    //         18u8,
-    //         std::string::into_bytes(name),
-    //         std::string::into_bytes(symbol),
-    //         std::vector::empty<u8>(),
-    //         std::option::none<Url>(),
-    //         ctx
-    //     );
-
-    //     transfer::public_freeze_object(coin_metadata);
-
-    //     let min_holding = total_supply / max_subscribers;
-
-    //     let minted = mint(&mut treasury_cap, total_supply, ctx);
-    //     let mut minted_balance = sui::coin::into_balance(minted);
-
-    //     let pool_amount = total_supply * 80 / 100;
-    //     let pool_mem = sui::balance::split(&mut minted_balance, pool_amount);
-    //     let pool_sui = sui::coin::into_balance(initial_sui_liquidity);
-
-    //     let service = Service<Phantom> {
-    //         id: object::new(ctx),
-    //         owner: tx_context::sender(ctx),
-    //         name: name,
-    //         min_holding,
-    //         max_subscribers,
-    //         pool_sui,
-    //         pool_mem,
-    //         admin_sui_fees: sui::balance::zero<SUI>(),
-    //         admin_mem_fees: sui::balance::zero<Phantom>(),
-    //         treasury_cap: treasury_cap,
-    //     };
-
-    //     let cap = Cap {
-    //         id: object::new(ctx),
-    //         service_id: object::id(&service),
-    //     };
-
-    //     event::emit(ServiceCreatedEvent {
-    //         owner: tx_context::sender(ctx),
-    //         service_id: object::id(&service),
-    //         memecoin_name: service.name,
-    //     });
-
-    //     transfer::transfer(service, tx_context::sender(ctx));
-    //     transfer::transfer(cap, tx_context::sender(ctx));
-    //     let owner_coin = sui::coin::from_balance(minted_balance, ctx);
-    //     transfer::public_transfer(owner_coin, tx_context::sender(ctx));
-    // }
-
     public fun create_subscription_group(service: &Service<ServiceWitness>, ctx: &mut TxContext): SubscriptionGroup {
         SubscriptionGroup {
             id: object::new(ctx),
@@ -247,7 +189,7 @@ module mem_coin::memvault {
     /// Access control
     /// key format: [pkg id]::[service id][random nonce]
 
-    fun approve_internal(id: vector<u8>, sub: &Subscription, service: &Service<Phantom>, user_coin: &Coin<Phantom>): bool {
+    fun approve_internal(id: vector<u8>, sub: &Subscription, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>): bool {
         if (object::id(service) != sub.service_id) {
             return false
         };
@@ -261,22 +203,20 @@ module mem_coin::memvault {
         is_prefix(service.id.to_bytes(), id)
     }
 
-    entry fun seal_approve(id: vector<u8>, sub: &Subscription, service: &Service<Phantom>, user_coin: &Coin<Phantom>) {
+    entry fun seal_approve(id: vector<u8>, sub: &Subscription, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>) {
         assert!(approve_internal(id, sub, service, user_coin), ENoAccess);
     }
 
     /// Encapsulate a blob into a service
     public fun publish(
-        service: &mut Service<Phantom>,
+        service: &mut Service<ServiceWitness>,
         cap: &Cap,
         blob_id: String,
         ctx: &mut TxContext,
-
     ) {
         assert!(cap.service_id == object::id(service), EInvalidCap);
 
         df::add(&mut service.id, blob_id, MARKER);
-
 
         // 🔥 Emit ContentPublishedEvent
         event::emit(ContentPublishedEvent {
@@ -286,17 +226,16 @@ module mem_coin::memvault {
         });
     }
 
-
     //////////////////////////
     // Swapping-logic
     //////////////////////////
 
     public fun swap_sui_for_memecoin(
-        service: &mut Service<Phantom>,
+        service: &mut Service<ServiceWitness>,
         input_sui: Coin<SUI>,
         min_expected_mem: u64,
         ctx: &mut TxContext
-    ): Coin<Phantom> {
+    ): Coin<ServiceWitness> {
         let dx = sui::coin::value(&input_sui);
         assert!(dx > 0, EZeroAmount);
 
@@ -330,8 +269,8 @@ module mem_coin::memvault {
     }
 
     public fun swap_memecoin_for_sui(
-        service: &mut Service<Phantom>,
-        input_mem: Coin<Phantom>,
+        service: &mut Service<ServiceWitness>,
+        input_mem: Coin<ServiceWitness>,
         min_expected_sui: u64,
         ctx: &mut TxContext
     ): Coin<SUI> {
@@ -367,13 +306,13 @@ module mem_coin::memvault {
         sui::coin::from_balance(output, ctx)
     }
 
-    public fun admin_withdraw_sui(service: &mut Service<Phantom>, amount: u64, ctx: &mut TxContext): Coin<SUI> {
+    public fun admin_withdraw_sui(service: &mut Service<ServiceWitness>, amount: u64, ctx: &mut TxContext): Coin<SUI> {
         assert!(tx_context::sender(ctx) == service.owner, EUnauthorized);
         let output = sui::balance::split(&mut service.pool_sui, amount);
         sui::coin::from_balance(output, ctx)
     }
 
-    public fun admin_withdraw_memecoin(service: &mut Service<Phantom>, amount: u64, ctx: &mut TxContext): Coin<Phantom> {
+    public fun admin_withdraw_memecoin(service: &mut Service<ServiceWitness>, amount: u64, ctx: &mut TxContext): Coin<ServiceWitness> {
         assert!(tx_context::sender(ctx) == service.owner, EUnauthorized);
         let output = sui::balance::split(&mut service.pool_mem, amount);
         sui::coin::from_balance(output, ctx)
@@ -397,5 +336,60 @@ module mem_coin::memvault {
     public fun get_pool_balances<T: store>(service: &Service<T>): (u64, u64) {
         (sui::balance::value(&service.pool_sui), sui::balance::value(&service.pool_mem))
     }
+
+    #[test_only]
+    public fun create_service_for_test(
+        name: String,
+        total_supply: u64,
+        initial_sui_liquidity: Coin<SUI>,
+        max_subscribers: u64,
+        ctx: &mut TxContext
+    ): (Service<ServiceWitness>, Cap, Coin<ServiceWitness>) {
+        assert!(max_subscribers > 0 && total_supply > 0, EInvalidCap);
+
+        let min_holding = total_supply / max_subscribers;
+
+        // Use test helpers to mint and create treasury cap
+        let minted = sui::coin::mint_for_testing<ServiceWitness>(total_supply, ctx);
+        let mut minted_balance = sui::coin::into_balance(minted);
+
+        let pool_amount = total_supply * 80 / 100;
+        let pool_mem = sui::balance::split(&mut minted_balance, pool_amount);
+        let pool_sui = sui::coin::into_balance(initial_sui_liquidity);
+
+        let service = Service<ServiceWitness> {
+            id: object::new(ctx),
+            owner: tx_context::sender(ctx),
+            name,
+            min_holding,
+            max_subscribers,
+            pool_sui,
+            pool_mem,
+            admin_sui_fees: sui::balance::zero<SUI>(),
+            admin_mem_fees: sui::balance::zero<ServiceWitness>(),
+            treasury_cap: sui::coin::create_treasury_cap_for_testing<ServiceWitness>(ctx),
+        };
+
+        let cap = Cap {
+            id: object::new(ctx),
+            service_id: object::id(&service),
+        };
+
+        event::emit(ServiceCreatedEvent {
+            owner: tx_context::sender(ctx),
+            service_id: object::id(&service),
+            memecoin_name: service.name,
+        });
+
+        (service, cap, sui::coin::from_balance(minted_balance, ctx))
+    }
+
+    #[test_only]
+    public fun destroy_service_for_test(service: Service<ServiceWitness>, cap: Cap) {
+        // Transfer to a dummy address for testing
+        transfer::transfer(service, @0x1);
+        transfer::transfer(cap, @0x1);
+    }
+
 
 }
