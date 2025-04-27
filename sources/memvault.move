@@ -48,7 +48,7 @@ module mem_coin::memvault {
         service_id: ID,
     }
 
-    public struct SubscriptionGroup has key {
+    public struct SubscriptionGroup has key, store {
         id: UID,
         service_id: ID,
         subscriptions: vector<Subscription>,
@@ -86,7 +86,7 @@ module mem_coin::memvault {
     }
 
     public struct ServiceWitness has store, drop {
-        
+
     }
 
     public entry fun create_service(
@@ -110,18 +110,18 @@ module mem_coin::memvault {
             std::option::none<Url>(),
             ctx
         );
-    
+
         transfer::public_freeze_object(coin_metadata);
-    
+
         let min_holding = total_supply / max_subscribers;
-    
+
         let minted = mint(&mut treasury_cap, total_supply, ctx);
         let mut minted_balance = sui::coin::into_balance(minted);
-    
+
         let pool_amount = total_supply * 80 / 100;
         let pool_mem = sui::balance::split(&mut minted_balance, pool_amount);
         let pool_sui = sui::coin::into_balance(initial_sui_liquidity);
-    
+
         let service = Service<ServiceWitness> {
             id: object::new(ctx),
             owner: tx_context::sender(ctx),
@@ -134,18 +134,18 @@ module mem_coin::memvault {
             admin_mem_fees: sui::balance::zero<ServiceWitness>(),
             treasury_cap: treasury_cap,
         };
-    
+
         let cap = Cap {
             id: object::new(ctx),
             service_id: object::id(&service),
         };
-    
+
         event::emit(ServiceCreatedEvent {
             owner: tx_context::sender(ctx),
             service_id: object::id(&service),
             memecoin_name: service.name,
         });
-    
+
         transfer::transfer(service, tx_context::sender(ctx));
         transfer::transfer(cap, tx_context::sender(ctx));
         let owner_coin = sui::coin::from_balance(minted_balance, ctx);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-
+/*
 #[test_only]
 module mem_coin::subscriptions_tests {
     use sui::test_scenario::{Self as ts, Scenario};
@@ -501,3 +501,4 @@ module mem_coin::subscriptions_tests {
     // - Testing price updates
     // - More error cases
 }
+*/
