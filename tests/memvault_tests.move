@@ -17,15 +17,19 @@ module mem_coin::memvault_tests {
     fun test_create_service() {
         let mut ctx = tx_context::dummy();
         let name = string::utf8(b"TestService");
+        let description = string::utf8(b"Test Description");
+        let url = string::utf8(b"https://test.com");
         let total_supply = 10_000;
-        let max_subscribers = 100;
+        let min_holding = 100;
         let initial_sui_liquidity = zero<SUI>(&mut ctx);
 
         let (service, cap, owner_coin) = memvault::create_service_for_test(
             name,
+            description,
+            url,
             total_supply,
             initial_sui_liquidity,
-            max_subscribers,
+            min_holding,
             &mut ctx,
         );
 
@@ -39,73 +43,62 @@ module mem_coin::memvault_tests {
         transfer::public_transfer(owner_coin, @0x1);
     }
 
-    // ------------------------------------------------------------
-    // 2. 订阅逻辑测试
-    // ------------------------------------------------------------
     #[test]
-    fun test_subscribe() {
+    fun test_publish() {
         let mut ctx = tx_context::dummy();
-        let name = string::utf8(b"SubService");
+        let name = string::utf8(b"TestService");
+        let description = string::utf8(b"Test Description");
+        let url = string::utf8(b"https://test.com");
         let total_supply = 10_000;
-        let max_subscribers = 100;
+        let min_holding = 100;
         let initial_sui_liquidity = zero<SUI>(&mut ctx);
 
-        let (service, cap, owner_coin) = memvault::create_service_for_test(
+        let (mut service, cap, owner_coin) = memvault::create_service_for_test(
             name,
+            description,
+            url,
             total_supply,
             initial_sui_liquidity,
-            max_subscribers,
+            min_holding,
             &mut ctx,
         );
 
-        let mut group = memvault::create_subscription_group(&service, &mut ctx);
-
-        let holding = total_supply / max_subscribers;
-        let user_coin = coin::mint_for_testing<ServiceWitness>(holding, &mut ctx);
-
-        let returned_coin = memvault::subscribe(&service, &mut group, user_coin, &mut ctx);
-        assert!(coin::value(&returned_coin) == holding, 102);
-
-        transfer::public_transfer(returned_coin, @0x1);
-        transfer::public_transfer(group, @0x1);
-        transfer::public_transfer(owner_coin, @0x1);
+        memvault::publish(&mut service, &cap, string::utf8(b"test-blob"), &mut ctx);
 
         memvault::destroy_service_for_test(service, cap);
+        transfer::public_transfer(owner_coin, @0x1);
     }
 
-    // ------------------------------------------------------------
-    // 3. 兑换与提款逻辑测试
-    // 创建初始池子；
-    // 模拟 SUI→MEME、MEME→SUI 双向交换；
-    // 调用管理员提取手续费接口，断言数额正确；
-    // 全部剩余 coin 转移到 @0x1 并销毁服务
-    // ------------------------------------------------------------
     #[test]
     fun test_swap_and_withdraw() {
         let mut ctx = tx_context::dummy();
         let name = string::utf8(b"SwapService");
+        let description = string::utf8(b"Test Description");
+        let url = string::utf8(b"https://test.com");
         let total_supply = 10_000;
-        let max_subscribers = 100;
+        let min_holding = 100;
         let initial_sui_liquidity = coin::mint_for_testing<SUI>(1_000, &mut ctx);
 
         let (mut service, cap, owner_coin) = memvault::create_service_for_test(
             name,
+            description,
+            url,
             total_supply,
             initial_sui_liquidity,
-            max_subscribers,
+            min_holding,
             &mut ctx,
         );
 
-        // --- swap SUI → MEM ---
+        // Test SUI → MEM swap
         let sui_in = coin::mint_for_testing<SUI>(500, &mut ctx);
         let mem_out = memvault::swap_sui_for_memecoin(&mut service, sui_in, 1, &mut ctx);
         assert!(coin::value(&mem_out) > 0, 103);
 
-        // --- swap MEM → SUI ---
+        // Test MEM → SUI swap
         let sui_out = memvault::swap_memecoin_for_sui(&mut service, mem_out, 1, &mut ctx);
         assert!(coin::value(&sui_out) > 0, 104);
 
-        // --- admin withdrawals ---
+        // Test admin withdrawals
         let admin_sui_coin = memvault::admin_withdraw_sui(&mut service, 50, &mut ctx);
         assert!(coin::value(&admin_sui_coin) == 50, 105);
         transfer::public_transfer(admin_sui_coin, @0x1);
