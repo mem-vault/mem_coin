@@ -5,13 +5,11 @@ module mem_coin::memvault {
     use sui::sui::SUI;
     use sui::dynamic_field as df;
     use sui::event;
-    use sui::url::Url;
     use std::string::String;
     use mem_coin::utils::is_prefix;
 
-    const ENotEnoughHolding: u64 = 0;
+    // const ENotEnoughHolding: u64 = 0;
     const EInvalidCap: u64 = 1;
-    const EMaxSubscribers: u64 = 2;
     const EPoolUnderflow: u64 = 3;
     const ESlippageExceeded: u64 = 4;
     const EUnauthorized: u64 = 5;
@@ -29,8 +27,9 @@ module mem_coin::memvault {
         id: UID,
         owner: address,
         name: String,
+        description: String,
+        url: String,
         min_holding: u64,
-        max_subscribers: u64,
         pool_sui: Balance<SUI>,
         pool_mem: Balance<T>,
         admin_sui_fees: Balance<SUI>,
@@ -38,31 +37,15 @@ module mem_coin::memvault {
         treasury_cap: TreasuryCap<T>,
     }
 
-    public struct Subscription has key, store {
-        id: UID,
-        service_id: ID
-    }
-
     public struct Cap has key {
         id: UID,
         service_id: ID,
-    }
-
-    public struct SubscriptionGroup has key, store {
-        id: UID,
-        service_id: ID,
-        subscriptions: vector<Subscription>,
     }
 
     public struct ServiceCreatedEvent has copy, drop, store {
         owner: address,
         service_id: ID,
         memecoin_name: String,
-    }
-
-    public struct SubscribedEvent has copy, drop, store {
-        user: address,
-        service_id: ID,
     }
 
     public struct SwapMemForSuiEvent has copy, drop, store {
@@ -89,31 +72,36 @@ module mem_coin::memvault {
 
     }
 
+    /// Struct to store all service IDs
+    public struct ServiceRegistry has key, store {
+        id: UID,
+        services: vector<ID>
+    }
+
     public entry fun create_service(
         name: String,
         symbol: String,
+        description: String,
+        url: String,
         total_supply: u64,
         initial_sui_liquidity: Coin<SUI>,
-        max_subscribers: u64,
+        min_holding: u64,
         ctx: &mut TxContext
     ) {
-        assert!(max_subscribers > 0 && total_supply > 0, EInvalidCap);
+        assert!(min_holding > 0 && total_supply > 0, EInvalidCap);
         let witness = ServiceWitness {};
-        // let witness = object::new<ServiceWitness>(ctx);
 
         let (mut treasury_cap, coin_metadata) = create_currency<ServiceWitness>(
             witness,
             18u8,
             std::string::into_bytes(name),
             std::string::into_bytes(symbol),
-            std::vector::empty<u8>(),
-            std::option::none<Url>(),
+            std::string::into_bytes(description),
+            std::option::some(sui::url::new_unsafe_from_bytes(std::string::into_bytes(url))),
             ctx
         );
 
         transfer::public_freeze_object(coin_metadata);
-
-        let min_holding = total_supply / max_subscribers;
 
         let minted = mint(&mut treasury_cap, total_supply, ctx);
         let mut minted_balance = sui::coin::into_balance(minted);
@@ -126,14 +114,24 @@ module mem_coin::memvault {
             id: object::new(ctx),
             owner: tx_context::sender(ctx),
             name: name,
+            description: description,
+            url: url,
             min_holding,
-            max_subscribers,
             pool_sui,
             pool_mem,
             admin_sui_fees: sui::balance::zero<SUI>(),
             admin_mem_fees: sui::balance::zero<ServiceWitness>(),
             treasury_cap: treasury_cap,
         };
+
+        let service_id = object::id(&service);
+
+        let mut registry = ServiceRegistry {
+            id: object::new(ctx),
+            services: vector::empty<ID>()
+        };
+        vector::push_back(&mut registry.services, service_id);
+        transfer::share_object(registry);
 
         let cap = Cap {
             id: object::new(ctx),
@@ -152,47 +150,16 @@ module mem_coin::memvault {
         transfer::public_transfer(owner_coin, tx_context::sender(ctx));
     }
 
-
-    public fun create_subscription_group(service: &Service<ServiceWitness>, ctx: &mut TxContext): SubscriptionGroup {
-        SubscriptionGroup {
-            id: object::new(ctx),
-            service_id: object::id(service),
-            subscriptions: vector::empty(),
-        }
-    }
-
-    public fun subscribe(
-        service: &Service<ServiceWitness>,
-        group: &mut SubscriptionGroup,
-        user_coin: Coin<ServiceWitness>,
-        ctx: &mut TxContext
-    ): Coin<ServiceWitness> {
-        let user_holding = sui::coin::value(&user_coin);
-        assert!(user_holding >= service.min_holding, ENotEnoughHolding);
-        assert!(vector::length(&group.subscriptions) < service.max_subscribers, EMaxSubscribers);
-
-        let sub = Subscription {
-            id: object::new(ctx),
-            service_id: object::id(service),
-        };
-        vector::push_back(&mut group.subscriptions, sub);
-
-        event::emit(SubscribedEvent {
-            user: tx_context::sender(ctx),
-            service_id: object::id(service),
-        });
-
-        user_coin
+    /// Returns all service IDs that have been created
+    public fun get_all_services(registry: &ServiceRegistry): vector<ID> {
+        registry.services
     }
 
     //////////////////////////////////////////////////////////
     /// Access control
     /// key format: [pkg id]::[service id][random nonce]
 
-    fun approve_internal(id: vector<u8>, sub: &Subscription, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>): bool {
-        if (object::id(service) != sub.service_id) {
-            return false
-        };
+    fun approve_internal(id: vector<u8>, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>): bool {
 
         let user_holding = sui::coin::value(user_coin);
         if(user_holding < service.min_holding) {
@@ -203,8 +170,8 @@ module mem_coin::memvault {
         is_prefix(service.id.to_bytes(), id)
     }
 
-    entry fun seal_approve(id: vector<u8>, sub: &Subscription, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>) {
-        assert!(approve_internal(id, sub, service, user_coin), ENoAccess);
+    entry fun seal_approve(id: vector<u8>, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>) {
+        assert!(approve_internal(id, service, user_coin), ENoAccess);
     }
 
     /// Encapsulate a blob into a service
@@ -340,14 +307,13 @@ module mem_coin::memvault {
     #[test_only]
     public fun create_service_for_test(
         name: String,
+        description: String,
+        url: string,
         total_supply: u64,
         initial_sui_liquidity: Coin<SUI>,
-        max_subscribers: u64,
+        min_holding: u64,
         ctx: &mut TxContext
     ): (Service<ServiceWitness>, Cap, Coin<ServiceWitness>) {
-        assert!(max_subscribers > 0 && total_supply > 0, EInvalidCap);
-
-        let min_holding = total_supply / max_subscribers;
 
         // Use test helpers to mint and create treasury cap
         let minted = sui::coin::mint_for_testing<ServiceWitness>(total_supply, ctx);
@@ -361,8 +327,9 @@ module mem_coin::memvault {
             id: object::new(ctx),
             owner: tx_context::sender(ctx),
             name,
+            description:std::string::utf8(b"test"),
+            url:std::string::utf8(b"test"),
             min_holding,
-            max_subscribers,
             pool_sui,
             pool_mem,
             admin_sui_fees: sui::balance::zero<SUI>(),
