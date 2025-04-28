@@ -1,6 +1,6 @@
 module mem_coin::memvault {
 
-    use sui::coin::{Coin, TreasuryCap, create_currency, mint};
+    use sui::coin::{Coin, TreasuryCap, mint};
     use sui::balance::{Balance};
     use sui::sui::SUI;
     use sui::dynamic_field as df;
@@ -78,39 +78,26 @@ module mem_coin::memvault {
         services: vector<ID>
     }
 
-    public entry fun create_service(
+    public entry fun create_service<T: store>(
         name: String,
-        symbol: String,
         description: String,
         url: String,
         total_supply: u64,
+        mut treasury_cap: TreasuryCap<T>,
         initial_sui_liquidity: Coin<SUI>,
         min_holding: u64,
         ctx: &mut TxContext
     ) {
         assert!(min_holding > 0 && total_supply > 0, EInvalidCap);
-        let witness = ServiceWitness {};
-
-        let (mut treasury_cap, coin_metadata) = create_currency<ServiceWitness>(
-            witness,
-            18u8,
-            std::string::into_bytes(name),
-            std::string::into_bytes(symbol),
-            std::string::into_bytes(description),
-            std::option::some(sui::url::new_unsafe_from_bytes(std::string::into_bytes(url))),
-            ctx
-        );
-
-        transfer::public_freeze_object(coin_metadata);
-
         let minted = mint(&mut treasury_cap, total_supply, ctx);
+
         let mut minted_balance = sui::coin::into_balance(minted);
 
         let pool_amount = total_supply * 80 / 100;
         let pool_mem = sui::balance::split(&mut minted_balance, pool_amount);
         let pool_sui = sui::coin::into_balance(initial_sui_liquidity);
 
-        let service = Service<ServiceWitness> {
+        let service = Service<T> {
             id: object::new(ctx),
             owner: tx_context::sender(ctx),
             name: name,
@@ -120,17 +107,15 @@ module mem_coin::memvault {
             pool_sui,
             pool_mem,
             admin_sui_fees: sui::balance::zero<SUI>(),
-            admin_mem_fees: sui::balance::zero<ServiceWitness>(),
+            admin_mem_fees: sui::balance::zero<T>(),
             treasury_cap: treasury_cap,
         };
-
-        let service_id = object::id(&service);
 
         let mut registry = ServiceRegistry {
             id: object::new(ctx),
             services: vector::empty<ID>()
         };
-        vector::push_back(&mut registry.services, service_id);
+        vector::push_back(&mut registry.services, object::id(&service));
         transfer::share_object(registry);
 
         let cap = Cap {
@@ -159,7 +144,7 @@ module mem_coin::memvault {
     /// Access control
     /// key format: [pkg id]::[service id][random nonce]
 
-    fun approve_internal(id: vector<u8>, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>): bool {
+    fun approve_internal<T: store>(id: vector<u8>, service: &Service<T>, user_coin: &Coin<T>): bool {
 
         let user_holding = sui::coin::value(user_coin);
         if(user_holding < service.min_holding) {
@@ -170,13 +155,13 @@ module mem_coin::memvault {
         is_prefix(service.id.to_bytes(), id)
     }
 
-    entry fun seal_approve(id: vector<u8>, service: &Service<ServiceWitness>, user_coin: &Coin<ServiceWitness>) {
+    entry fun seal_approve<T: store>(id: vector<u8>, service: &Service<T>, user_coin: &Coin<T>) {
         assert!(approve_internal(id, service, user_coin), ENoAccess);
     }
 
     /// Encapsulate a blob into a service
-    public fun publish(
-        service: &mut Service<ServiceWitness>,
+    public fun publish<T: store>(
+        service: &mut Service<T>,
         cap: &Cap,
         blob_id: String,
         ctx: &mut TxContext,
@@ -197,12 +182,12 @@ module mem_coin::memvault {
     // Swapping-logic
     //////////////////////////
 
-    public fun swap_sui_for_memecoin(
-        service: &mut Service<ServiceWitness>,
+    public fun swap_sui_for_memecoin<T: store>(
+        service: &mut Service<T>,
         input_sui: Coin<SUI>,
         min_expected_mem: u64,
         ctx: &mut TxContext
-    ): Coin<ServiceWitness> {
+    ): Coin<T> {
         let dx = sui::coin::value(&input_sui);
         assert!(dx > 0, EZeroAmount);
 
@@ -235,9 +220,9 @@ module mem_coin::memvault {
         sui::coin::from_balance(output, ctx)
     }
 
-    public fun swap_memecoin_for_sui(
-        service: &mut Service<ServiceWitness>,
-        input_mem: Coin<ServiceWitness>,
+    public fun swap_memecoin_for_sui<T: store>(
+        service: &mut Service<T>,
+        input_mem: Coin<T>,
         min_expected_sui: u64,
         ctx: &mut TxContext
     ): Coin<SUI> {
@@ -273,13 +258,13 @@ module mem_coin::memvault {
         sui::coin::from_balance(output, ctx)
     }
 
-    public fun admin_withdraw_sui(service: &mut Service<ServiceWitness>, amount: u64, ctx: &mut TxContext): Coin<SUI> {
+    public fun admin_withdraw_sui<T: store>(service: &mut Service<T>, amount: u64, ctx: &mut TxContext): Coin<SUI> {
         assert!(tx_context::sender(ctx) == service.owner, EUnauthorized);
         let output = sui::balance::split(&mut service.pool_sui, amount);
         sui::coin::from_balance(output, ctx)
     }
 
-    public fun admin_withdraw_memecoin(service: &mut Service<ServiceWitness>, amount: u64, ctx: &mut TxContext): Coin<ServiceWitness> {
+    public fun admin_withdraw_memecoin<T: store>(service: &mut Service<T>, amount: u64, ctx: &mut TxContext): Coin<T> {
         assert!(tx_context::sender(ctx) == service.owner, EUnauthorized);
         let output = sui::balance::split(&mut service.pool_mem, amount);
         sui::coin::from_balance(output, ctx)
