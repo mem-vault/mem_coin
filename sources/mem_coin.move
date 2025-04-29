@@ -1,46 +1,35 @@
-// SPDX-License-Identifier: Apache-2.0
-
-/// Example coin with a trusted manager responsible for minting/burning (e.g., a stablecoin)
-/// By convention, modules defining custom coin types use upper case names, in contrast to
-/// ordinary modules, which use camel case.
-
-module mem_coin::memory;
+module mem_coin::mem_coin;
 
 use sui::coin::{Self, Coin, TreasuryCap};
 
-/// Name of the coin. By convention, this type has the same name as its parent module
-/// and has no fields. The full type of the coin defined by this module will be `COIN<MEMORY>`.
-public struct MEMORY has drop {}
+public struct MEM_COIN has drop {}
 
-/// Register the managed currency to acquire its `TreasuryCap`. Because
-/// this is a module initializer, it ensures the currency only gets
-/// registered once.
-fun init(witness: MEMORY, ctx: &mut TxContext) {
-    // Get a treasury cap for the coin and give it to the transaction sender
-    let (treasury_cap, metadata) = coin::create_currency<MEMORY>(
-        witness,
-        2,
-        b"MEMORY",
-        b"MMRY",
-        b"",
-        option::none(),
-        ctx,
-    );
-    transfer::public_freeze_object(metadata);
-    transfer::public_transfer(treasury_cap, tx_context::sender(ctx))
+fun init(witness: MEM_COIN, ctx: &mut TxContext) {
+		let (treasury, metadata) = coin::create_currency(
+				witness,
+				6,
+				b"MEM_COIN",
+				b"MEM",
+				b"",
+				option::none(),
+				ctx,
+		);
+		transfer::public_freeze_object(metadata);
+		transfer::public_transfer(treasury, ctx.sender())
 }
 
-/// Manager can mint new coins
+// Manager can mint new coins
 public fun mint(
-    treasury_cap: &mut TreasuryCap<MEMORY>,
-    amount: u64,
-    recipient: address,
-    ctx: &mut TxContext,
+		treasury_cap: &mut TreasuryCap<MEM_COIN>,
+		amount: u64,
+		recipient: address,
+		ctx: &mut TxContext,
 ) {
-    coin::mint_and_transfer(treasury_cap, amount, recipient, ctx)
+		let coin = coin::mint(treasury_cap, amount, ctx);
+		transfer::public_transfer(coin, recipient)
 }
 
 /// Manager can burn coins
-public fun burn(treasury_cap: &mut TreasuryCap<MEMORY>, coin: Coin<MEMORY>) {
+public fun burn(treasury_cap: &mut TreasuryCap<MEM_COIN>, coin: Coin<MEM_COIN>) {
     coin::burn(treasury_cap, coin);
 }
