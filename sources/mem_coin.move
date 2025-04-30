@@ -1,8 +1,6 @@
 module mem_coin::mem_coin;
 
 use sui::coin::{Self, Coin, TreasuryCap, CoinMetadata};
-// use sui::tx_context::TxContext;
-// use sui::transfer;
 
 public struct MEM_COIN has drop {}
 
