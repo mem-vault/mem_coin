@@ -1,6 +1,8 @@
 module mem_coin::mem_coin;
 
-use sui::coin::{Self, Coin, TreasuryCap};
+use sui::coin::{Self, Coin, TreasuryCap, CoinMetadata};
+// use sui::tx_context::TxContext;
+// use sui::transfer;
 
 public struct MEM_COIN has drop {}
 
@@ -32,4 +34,20 @@ public fun mint(
 /// Manager can burn coins
 public fun burn(treasury_cap: &mut TreasuryCap<MEM_COIN>, coin: Coin<MEM_COIN>) {
     coin::burn(treasury_cap, coin);
+}
+
+
+#[test_only]
+/// Create a new currency for testing
+public fun init_for_testing(ctx: &mut TxContext): (TreasuryCap<MEM_COIN>, CoinMetadata<MEM_COIN>) {
+    let witness = MEM_COIN {};
+    coin::create_currency(
+        witness,
+        6,
+        b"MEM_COIN",
+        b"MEM",
+        b"",
+        option::none(),
+        ctx
+    )
 }
