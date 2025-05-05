@@ -1,6 +1,6 @@
 module mem_coin::mem_coin;
 
-use sui::coin::{Self, Coin, TreasuryCap, CoinMetadata};
+use sui::coin::{Self, Coin, TreasuryCap};
 
 public struct MEM_COIN has drop {}
 
@@ -15,7 +15,8 @@ fun init(witness: MEM_COIN, ctx: &mut TxContext) {
 				ctx,
 		);
 		transfer::public_freeze_object(metadata);
-		transfer::public_transfer(treasury, ctx.sender())
+		// transfer::public_transfer(treasury, ctx.sender())
+		transfer::public_share_object(treasury); //public mintable coin
 }
 
 // Manager can mint new coins

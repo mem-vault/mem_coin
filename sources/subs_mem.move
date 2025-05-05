@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-module mem_coin::subscription_mem;
+module mem_coin::subs_mem;
 
 use std::string::String;
 use sui::{clock::Clock, coin::{Self, Coin}, dynamic_field as df};
@@ -21,29 +21,8 @@ public struct Service has key {
     ttl: u64,
     owner: address,
     name: String,
-    description: String,
     max_subscriptions: u64,
-    publish_id: u64,
-}
-
-
-public struct ServiceInfo has store, drop, copy {
-    service_id: ID,
-    fee: u64,
-    ttl: u64,
-    owner: address,
-    name: String,
-    description: String,
-    max_subscriptions: u64,
-    created_at: u64,
-}
-
-// Add the store ability to ServiceInfoStorage
-public struct ServiceInfoStorage has key, store {
-    id: UID,
-    infos: vector<ServiceInfo>,
-    counter: u64,
-    max_size: u64,
+    publish_id: u64, 
 }
 
 public struct Subscription has key, store {
@@ -97,14 +76,13 @@ public struct ContentPublishedEvent has copy, drop, store {
 //////////////////////////////////////////
 /////// Service creation
 
-public fun create_service(fee: u64, ttl: u64, max_subscriptions: u64, name: String, description: String, ctx: &mut TxContext): Cap {
+public fun create_service(fee: u64, ttl: u64, max_subscriptions: u64, name: String, ctx: &mut TxContext): Cap {
     let service = Service {
         id: object::new(ctx),
         fee,
         ttl,
-        owner: tx_context::sender(ctx),
+        owner: ctx.sender(),
         name,
-        description,
         max_subscriptions,
         publish_id: 0,
     };
@@ -118,60 +96,18 @@ public fun create_service(fee: u64, ttl: u64, max_subscriptions: u64, name: Stri
     
     // Emit service created event
     event::emit(ServiceCreatedEvent {
-        owner: tx_context::sender(ctx),
+        owner: ctx.sender(),
         service_id,
         service_name: name,
     });
-    
     
     transfer::share_object(service);
     cap
 }
 
-
-entry fun create_service_entry(fee: u64, ttl: u64, max_subscriptions: u64, name: String, description: String, ctx: &mut TxContext) {
-    transfer::transfer(create_service(fee, ttl, max_subscriptions, name, description, ctx), tx_context::sender(ctx));
+entry fun create_service_entry(fee: u64, ttl: u64, max_subscriptions: u64, name: String, ctx: &mut TxContext) {
+    transfer::transfer(create_service(fee, ttl, max_subscriptions, name, ctx), ctx.sender());
 }
-
-// Add service info to the storage
-public fun add_service_info(
-    storage: &mut ServiceInfoStorage,
-    service: &Service,
-    created_at: u64,
-) {
-
-
-    let service_id = object::id(service);
-
-    let info = ServiceInfo {
-        service_id,
-        fee: service.fee,
-        ttl: service.ttl,
-        owner: service.owner,
-        name: service.name,
-        description: service.description,
-        max_subscriptions: service.max_subscriptions,
-        created_at,
-    };
-    
-    // If we haven't reached max size yet, just push
-    if (vector::length(&storage.infos) < storage.max_size) {
-        vector::push_back(&mut storage.infos, info);
-    } else {
-        // Replace the oldest entry (using counter and mod)
-        let index = storage.counter % storage.max_size;
-        *vector::borrow_mut(&mut storage.infos, index) = info;
-    };
-    
-    // Increment counter
-    storage.counter = storage.counter + 1;
-}
-
-// Get all service infos
-public fun get_service_infos(storage: &ServiceInfoStorage): &vector<ServiceInfo> {
-    &storage.infos
-}
-
 
 //////////////////////////////////////////
 /////// Subscription Management
@@ -185,24 +121,21 @@ public fun subscribe(
 ) {
     assert!(vector::length(&group.subscriptions) < service.max_subscriptions, EMaxSubscriptionsReached);
     assert!(coin::value(&fee) == service.fee, EInvalidFee);
-    transfer::public_transfer(fee, service.owner);
-
-    let sub = Subscription {
-        id: object::new(ctx),
-        service_id: object::id(service),
-        created_at: c.timestamp_ms(),
-    };
     
-    let subscription_id = object::id(&sub);
-    
+    // Create the subscription and add it to the group
+    let sub = create_subscription(fee, service, c, ctx);
     vector::push_back(&mut group.subscriptions, sub);
     
-    // Emit subscription event
-    event::emit(SubscribedEvent {
-        user: ctx.sender(),
-        service_id: object::id(service),
-        subscription_id,
-    });
+}
+
+entry fun subscribe_entry(    
+    fee: Coin<MEM_COIN>,
+    service: &Service,
+    group: &mut SubscriptionGroup,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    subscribe(fee, service, group, c, ctx);
 }
 
 public fun create_subscription_group(service: &Service, ctx: &mut TxContext): SubscriptionGroup {
@@ -263,6 +196,8 @@ entry fun batch_subscribe(
     ctx: &mut TxContext,
 ) {
     let count = vector::length(&fees);
+    assert!(vector::length(&group.subscriptions) + count <= service.max_subscriptions, EMaxSubscriptionsReached);
+    
     let mut i = 0;
     
     while (i < count) {
@@ -271,11 +206,13 @@ entry fun batch_subscribe(
             let coin_ref = vector::borrow_mut(&mut fees, i);
             let coin_value = coin::value(coin_ref);
             let payment = coin::split(coin_ref, coin_value, ctx);
-            subscribe(payment, service, group, c, ctx);
+            let sub = create_subscription(payment, service, c, ctx);
+            vector::push_back(&mut group.subscriptions, sub);
         } else {
             // For the last coin, just take it directly
             let coin = vector::pop_back(&mut fees);
-            subscribe(coin, service, group, c, ctx);
+            let sub = create_subscription(coin, service, c, ctx);
+            vector::push_back(&mut group.subscriptions, sub);
         };
         i = i + 1;
     };
@@ -338,6 +275,10 @@ public fun get_subscriptions(group: &SubscriptionGroup): &vector<Subscription> {
     &group.subscriptions
 }
 
+public fun get_publish_id(service: &Service): u64 {
+    service.publish_id
+}
+
 //////////////////////////////////////////
 /////// Access control
 
@@ -353,7 +294,7 @@ entry fun seal_approve(id: vector<u8>, sub: &Subscription, service: &Service, c:
 
 
 //////////////////////////////////////////
-/// Trading Functionality
+/// Trading Functionality (NFT-like)
 
 /// Transfer subscription ownership (simple direct transfer)
 #[allow(lint(custom_state_change))]
@@ -367,6 +308,7 @@ entry fun transfer_subscription(sub: Subscription, to: address, ctx: &TxContext)
     
     transfer::transfer(sub, to);
 }
+
 
 /// Encapsulate a blob into a Sui object and attach it to the Subscription
 public fun publish(service: &mut Service, cap: &Cap, blob_id: String, ctx: &mut TxContext) {
@@ -384,19 +326,38 @@ public fun publish(service: &mut Service, cap: &Cap, blob_id: String, ctx: &mut 
     });
 }
 
-// Add a getter function for publish_id
-public fun get_publish_id(service: &Service): u64 {
-    service.publish_id
-}
 
-// Initialize the service info storage
-public entry fun init_service_info_storage(ctx: &mut TxContext) {
-    let storage = ServiceInfoStorage {
+public fun create_subscription(
+    fee: Coin<MEM_COIN>,
+    service: &Service,
+    c: &Clock,
+    ctx: &mut TxContext,
+): Subscription {
+    assert!(coin::value(&fee) == service.fee, EInvalidFee);
+    transfer::public_transfer(fee, service.owner);
+
+    let sub = Subscription {
         id: object::new(ctx),
-        infos: vector::empty<ServiceInfo>(),
-        counter: 0,
-        max_size: 10,
+        service_id: object::id(service),
+        created_at: c.timestamp_ms(),
     };
     
-    transfer::share_object(storage);
+    // Emit subscription event
+    event::emit(SubscribedEvent {
+        user: ctx.sender(),
+        service_id: object::id(service),
+        subscription_id: object::id(&sub),
+    });
+    
+    sub
+}
+
+entry fun subscribe_direct(    
+    fee: Coin<MEM_COIN>,
+    service: &Service,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    let subscription = create_subscription(fee, service, c, ctx);
+    transfer::public_transfer(subscription, ctx.sender());
 }
